@@ -92,7 +92,7 @@ class Context {
 
  private:
   std::map<std::string, std::shared_ptr<void>> m_map_;
-  std::mutex m_mutex_;
+  mutable std::mutex m_mutex_;
 };
 
 template <typename T>

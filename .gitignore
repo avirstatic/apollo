@@ -85,3 +85,7 @@ tools/FlameGraph
 modules/studio_connector
 
 #WORKSPACE
+
+
+# wllvm-bc
+wllvm_bc/
