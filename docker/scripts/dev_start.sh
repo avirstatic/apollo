@@ -325,7 +325,7 @@ function setup_devices_and_mount_local_volumes() {
 function determine_gpu_use_host() {
     if [ "${HOST_ARCH}" = "aarch64" ]; then
         if lsmod | grep -q "^nvgpu"; then
-            USE_GPU_HOST=1
+            USE_GPU_HOST=0
         fi
     else
         # Check nvidia-driver and GPU device
@@ -335,7 +335,7 @@ function determine_gpu_use_host() {
         elif [ -z "$(eval ${nv_driver} )" ]; then
             warning "No GPU device found. CPU will be used."
         else
-            USE_GPU_HOST=1
+            USE_GPU_HOST=0
         fi
     fi
 
