@@ -77,3 +77,6 @@ output
 
 # Flamegraph files
 tools/FlameGraph
+
+# wllvm-bc
+wllvm_bc/

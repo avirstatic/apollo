@@ -31,7 +31,7 @@ namespace apollo {
 namespace perception {
 namespace base {
 
-struct alignas(16) Object {
+struct alignas(32) Object {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   Object();
