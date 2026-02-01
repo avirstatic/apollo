@@ -1,0 +1,10 @@
+#!/bin/bash
+
+export PATH=/usr/local/cuda-11.1/bin:/apollo/scripts:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+export LLVM_COMPILER=clang
+export WLLVM_BC_STORE=/apollo/wllvm_bc
+export LLVM_BITCODE_GENERATION_FLAGS="-flto -fwhole-program-vtables"
+export THE_USER=$(whoami)
+
+exec /home/$THE_USER/.local/bin/wllvm++ "$@"

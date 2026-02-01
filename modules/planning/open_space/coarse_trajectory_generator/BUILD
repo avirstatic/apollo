@@ -51,7 +51,8 @@ cc_library(
 
 cc_library(
     name = "open_space_utils",
-    copts = PLANNING_COPTS,
+    copts = PLANNING_COPTS + ["-fopenmp"],
+    linkopts = ["-lgomp", "-fopenmp"],
     deps = [
         "//modules/planning/open_space/coarse_trajectory_generator:grid_search",
         "//modules/planning/open_space/coarse_trajectory_generator:node3d",
@@ -63,7 +64,8 @@ cc_library(
     name = "hybrid_a_star",
     srcs = ["hybrid_a_star.cc"],
     hdrs = ["hybrid_a_star.h"],
-    copts = PLANNING_COPTS,
+    copts = PLANNING_COPTS + ["-fopenmp"],
+    linkopts = ["-lgomp", "-fopenmp"],
     deps = [
         ":open_space_utils",
         "//cyber",
@@ -94,7 +96,14 @@ cc_test(
     name = "node3d_test",
     size = "small",
     srcs = ["node3d_test.cc"],
-    linkopts = ["-lgomp"],
+    copts = [
+        "-DMODULE_NAME=\\\"planning\\\"",
+        "-fopenmp",
+    ],
+    linkopts = [
+        "-lgomp",
+        "-fopenmp",
+    ],
     deps = [
         ":open_space_utils",
         "//cyber",

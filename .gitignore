@@ -82,3 +82,6 @@ tools/FlameGraph
 .DS_Store
 
 #WORKSPACE
+
+# wllvm-bc
+wllvm_bc/
