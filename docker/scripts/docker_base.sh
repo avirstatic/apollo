@@ -45,7 +45,7 @@ USE_GPU_HOST=0
 function determine_gpu_use_host() {
     if [[ "${HOST_ARCH}" == "aarch64" ]]; then
         if lsmod | grep -q "^nvgpu"; then
-            USE_GPU_HOST=1
+            USE_GPU_HOST=0
         fi
     elif [[ "${HOST_ARCH}" == "x86_64" ]]; then
         if [[ ! -x "$(command -v nvidia-smi)" ]]; then
@@ -53,7 +53,7 @@ function determine_gpu_use_host() {
         elif [[ -z "$(nvidia-smi)" ]]; then
             warning "No GPU device found. CPU will be used."
         else
-            USE_GPU_HOST=1
+            USE_GPU_HOST=0
         fi
     else
         error "Unsupported CPU architecture: ${HOST_ARCH}"
