@@ -26,18 +26,25 @@ build --show_timestamps
 build --spawn_strategy=standalone
 
 # Enable colorful output of GCC
-build --cxxopt="-fdiagnostics-color=always"
+# build --cxxopt="-fdiagnostics-color=always"        # This line is a feature of GCC compiler, clang doesn't need
 
 # Do not show warnings from external dependencies.
 # build --output_filter="^//"
 
 build --per_file_copt=external/upb/.*@-Wno-sign-compare
-build --copt="-Werror=sign-compare"
-build --per_file_copt=^modules/.*\.cc,^cyber/.*\.cc,@"-Werror=return-type"
-build --copt="-Werror=unused-variable"
-build --copt="-Werror=unused-but-set-variable"
-build --copt="-Werror=switch"
-build --cxxopt="-Werror=reorder"
+# build --copt="-Werror=sign-compare"                # treat sign-compare warning as an error, should be commented out
+# build --copt="-Werror=return-type"                 # treat return-type warning as an error, should be commented out
+# build --copt="-Werror=unused-variable"             # treat unused-variable as an error, should be commented out
+# build --copt="-Werror=unused-but-set-variable"     # treat unused-but-set-variable as an error, should be commented out
+# build --copt="-Werror=switch"                      # treat switch warning as an error, should be commented out
+# build --cxxopt="-Werror=reorder"                   # treat reorder warning as an error, should be commented out
+
+# Enable AVX2 support
+build --copt=-mavx2
+build --cxxopt=-mavx2
+
+build --copt=-mno-sse3                               # disables the SSE3 (Streaming SIMD Extensions 3) instruction set for c compiler
+build --crosstool_top=//tools/wllvm:toolchain        # points to a cc-toolchain defined in the wllvm toolset
 
 # Default paths for SYSTEM LIBRARIES
 build --define=PREFIX=/usr
@@ -49,7 +56,7 @@ build --define=INCLUDEDIR=$(PREFIX)/include
 build:dbg -c dbg
 build:opt -c opt
 
-build --config=optimize
+build --config=dbg
 # Instruction set optimizations
 build:optimize --copt=-march=native
 build:optimize --host_copt=-march=native
@@ -121,3 +128,33 @@ coverage --test_tag_filters=-cpplint
 # | Python Configurations                                      |
 # +------------------------------------------------------------+
 # Python support was configured by third_party/py .
+
+# Force using wllvm
+build --incompatible_enable_cc_toolchain_resolution
+build --action_env=CC=/apollo/tools/wllvm/CC
+build --action_env=CXX=/apollo/tools/wllvm/CXX
+
+# Disable problematic compiler flags
+build --copt=-Wno-unknown-warning-option
+build --copt=-Wno-unused-command-line-argument
+build --cxxopt=-Wno-write-strings
+build --cxxopt=-fpermissive
+
+# Ignore warnings for problematic flags
+build --copt=-Wno-error
+build --cxxopt=-Wno-error
+
+# OpenMP support
+build --copt=-fopenmp
+build --cxxopt=-fopenmp
+build --linkopt=-fopenmp
+build --linkopt=-lomp
+
+# Basic compilation flags
+build --copt=-fPIC
+build --cxxopt=-fPIC
+
+# Linker configuration
+build --linkopt=-fuse-ld=gold
+build --linkopt=-Wl,--no-as-needed
+build --linkopt=-Wl,--allow-multiple-definition

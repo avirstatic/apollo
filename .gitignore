@@ -76,3 +76,6 @@ docs/demo_guide/*.record
 
 # Flamegraph files
 tools/FlameGraph
+
+# wllvm-bc
+wllvm_bc/
