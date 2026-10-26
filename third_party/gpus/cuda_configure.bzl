@@ -138,7 +138,7 @@ def _normalize_include_path(repository_ctx, path):
         return path[len(crosstool_folder) + 1:]
     return path
 
-def _get_cxx_inc_directories_impl(repository_ctx, cc, lang_is_cpp, tf_sysroot):
+def _get_cxx_inc_directories_impl(repository_ctx, cc, lang_is_cpp, tf_sysroot, extra_flags = []):
     """Compute the list of default C or C++ include directories."""
     if lang_is_cpp:
         lang = "c++"
@@ -148,7 +148,7 @@ def _get_cxx_inc_directories_impl(repository_ctx, cc, lang_is_cpp, tf_sysroot):
     if tf_sysroot:
         sysroot += ["--sysroot", tf_sysroot]
     result = raw_exec(repository_ctx, [cc, "-E", "-x" + lang, "-", "-v"] +
-                                      sysroot)
+                                      sysroot + extra_flags)
     stderr = err_out(result)
     index1 = stderr.find(_INC_DIR_MARKER_BEGIN)
     if index1 == -1:
@@ -170,7 +170,7 @@ def _get_cxx_inc_directories_impl(repository_ctx, cc, lang_is_cpp, tf_sysroot):
         for p in inc_dirs.split("\n")
     ]
 
-def get_cxx_inc_directories(repository_ctx, cc, tf_sysroot):
+def get_cxx_inc_directories(repository_ctx, cc, tf_sysroot, extra_flags = []):
     """Compute the list of default C and C++ include directories."""
 
     # For some reason `clang -xc` sometimes returns include paths that are
@@ -181,12 +181,14 @@ def get_cxx_inc_directories(repository_ctx, cc, tf_sysroot):
         cc,
         True,
         tf_sysroot,
+        extra_flags,
     )
     includes_c = _get_cxx_inc_directories_impl(
         repository_ctx,
         cc,
         False,
         tf_sysroot,
+        extra_flags,
     )
 
     return includes_cpp + [
@@ -769,8 +771,17 @@ def _use_cuda_clang(repository_ctx):
 def _tf_sysroot(repository_ctx):
     return get_host_environ(repository_ctx, _TF_SYSROOT, "")
 
-def _compute_cuda_extra_copts(repository_ctx, compute_capabilities):
+def _compute_cuda_extra_copts(repository_ctx, compute_capabilities, cuda_version_major = 0):
     copts = []
+    if _flag_enabled(repository_ctx, "APOLLO_CUDA_IR"):
+        # These global host options conflict with Clang's CUDA runtime headers.
+        # Keep ordinary C/C++ flags unchanged; this list is CUDA-only.
+        copts += ["-fno-openmp", "-U_FORTIFY_SOURCE"]
+        if int(cuda_version_major) >= 9:
+            # Bundled CUB normally selects synchronized warp intrinsics via
+            # __CUDACC_VER_MAJOR__, which Clang does not define. Select the same
+            # implementation as nvcc >= 9, required for sm_70+ with PTX >= 6.4.
+            copts.append("-DCUB_USE_COOPERATIVE_GROUPS")
     for capability in compute_capabilities:
         if capability.startswith("compute_"):
             capability = capability.replace("compute_", "sm_")
@@ -978,6 +989,7 @@ def _create_local_cuda_repository(repository_ctx):
             "%{cuda_extra_copts}": _compute_cuda_extra_copts(
                 repository_ctx,
                 cuda_config.compute_capabilities,
+                cuda_config.cuda_version_major,
             ),
             "%{cuda_gpu_architectures}": str(cuda_config.compute_capabilities),
         },
@@ -1008,6 +1020,9 @@ def _create_local_cuda_repository(repository_ctx):
     )
 
     is_cuda_clang = _use_cuda_clang(repository_ctx)
+    capture_cuda_ir = _flag_enabled(repository_ctx, "APOLLO_CUDA_IR")
+    if capture_cuda_ir and not is_cuda_clang:
+        auto_configure_fail("APOLLO_CUDA_IR requires TF_CUDA_CLANG=1")
     tf_sysroot = _tf_sysroot(repository_ctx)
 
     # Set up crosstool/
@@ -1052,8 +1067,28 @@ def _create_local_cuda_repository(repository_ctx):
         # switch it off for now.
         "-Wno-invalid-partial-specialization"
     """
-        cuda_defines["%{cxx_builtin_include_directories}"] = to_list_of_strings(host_compiler_includes)
+        # Match the actual driver's -no-canonical-prefixes resource paths too.
+        for inc in get_cxx_inc_directories(repository_ctx, cc_fullpath, tf_sysroot, ["-no-canonical-prefixes"]):
+            if inc not in host_compiler_includes:
+                host_compiler_includes.append(inc)
+        cuda_defines["%{cxx_builtin_include_directories}"] = to_list_of_strings(
+            host_compiler_includes + [
+                cuda_config.config["cuda_include_dir"],
+                cuda_config.cuda_toolkit_path + "/include",
+                cupti_header_dir,
+                cudnn_header_dir,
+            ],
+        )
         cuda_defines["%{compiler_deps}"] = ":empty"
+        if capture_cuda_ir:
+            repository_ctx.template(
+                "crosstool/clang/bin/cuda_ir",
+                Label("//tools/wllvm:CUDA"),
+                {},
+                executable = True,
+            )
+            cuda_defines["%{host_compiler_path}"] = "clang/bin/cuda_ir"
+            cuda_defines["%{compiler_deps}"] = ":cuda_ir_wrapper"
         repository_ctx.file(
             "crosstool/clang/bin/crosstool_wrapper_driver_is_not_gcc",
             "",
@@ -1201,6 +1236,8 @@ def _cuda_autoconf_impl(repository_ctx):
     if not enable_cuda(repository_ctx):
         _create_dummy_repository(repository_ctx)
     elif get_host_environ(repository_ctx, _TF_CUDA_CONFIG_REPO) != None:
+        if _flag_enabled(repository_ctx, "APOLLO_CUDA_IR"):
+            auto_configure_fail("CUDA IR capture requires a locally generated CUDA toolchain; unset TF_CUDA_CONFIG_REPO")
         has_cuda_version = get_host_environ(repository_ctx, _TF_CUDA_VERSION) != None
         has_cudnn_version = get_host_environ(repository_ctx, _TF_CUDNN_VERSION) != None
         if not has_cuda_version or not has_cudnn_version:
@@ -1219,6 +1256,7 @@ _ENVIRONS = [
     _CLANG_CUDA_COMPILER_PATH,
     "TF_NEED_CUDA",
     "TF_CUDA_CLANG",
+    "APOLLO_CUDA_IR",
     _CUDA_TOOLKIT_PATH,
     _CUDNN_INSTALL_PATH,
     _TF_CUDA_VERSION,

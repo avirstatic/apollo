@@ -79,3 +79,4 @@ tools/FlameGraph
 
 # wllvm-bc
 wllvm_bc/
+wllvm_linked/

@@ -325,7 +325,7 @@ function setup_devices_and_mount_local_volumes() {
 function determine_gpu_use_host() {
     if [ "${HOST_ARCH}" = "aarch64" ]; then
         if lsmod | grep -q "^nvgpu"; then
-            USE_GPU_HOST=0
+            USE_GPU_HOST=1
         fi
     else
         # Check nvidia-driver and GPU device
@@ -335,7 +335,7 @@ function determine_gpu_use_host() {
         elif [ -z "$(eval ${nv_driver} )" ]; then
             warning "No GPU device found. CPU will be used."
         else
-            USE_GPU_HOST=0
+            USE_GPU_HOST=1
         fi
     fi
 
@@ -366,6 +366,23 @@ function remove_existing_dev_container() {
         docker stop "${APOLLO_DEV}" >/dev/null
         docker rm -v -f "${APOLLO_DEV}" >/dev/null
     fi
+}
+
+function clean_build_and_bitcode_caches() {
+    # WLLVM records only paths in each object's .llvm_bc section. Clear the Bazel
+    # outputs and wllvm_bc together so that a build never reuses objects whose
+    # bitcode is gone, and wllvm_bc holds only this build's captures. Linked IR
+    # from earlier builds (wllvm_linked) is removed as well.
+    local dir
+    for dir in "${CACHE_ROOT_DIR}/bazel" "${APOLLO_ROOT_DIR}/wllvm_bc" \
+               "${APOLLO_ROOT_DIR}/wllvm_linked"; do
+        if [ -e "${dir}" ]; then
+            # Bazel leaves read-only directories behind.
+            chmod -R u+rwx "${dir}" 2>/dev/null
+            rm -rf "${dir}" || warning "Failed to remove ${dir}"
+        fi
+    done
+    rm -f "${APOLLO_ROOT_DIR}"/bazel-*
 }
 
 function docker_pull() {
@@ -498,6 +515,9 @@ function main() {
 
     info "Check and remove existing Apollo dev container ..."
     remove_existing_dev_container
+
+    info "Clean Bazel outputs, WLLVM bitcode and linked IR for a full rebuild ..."
+    clean_build_and_bitcode_caches
 
     info "Determine whether host GPU is available ..."
     determine_gpu_use_host

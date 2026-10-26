@@ -87,6 +87,19 @@ function setup_apollo_directories() {
 }
 
 ##===================== Main ==============================##
+function setup_wllvm_toolchain() {
+  local user_name="$1"
+  # libomp: -fopenmp/-lomp in tools/bazel.rc; llvm-10: llvm-link etc. for extract-bc
+  apt-get update
+  apt-get install -y libomp5 libomp-dev llvm-10
+  ldconfig
+  # WLLVM is installed per user (~/.local/bin), as tools/wllvm/{CC,CXX} expect
+  su - "${user_name}" -c "python3 -m pip install --user wllvm==1.3.1"
+  # WLLVM_BC_STORE in tools/wllvm/{CC,CXX} and tools/bazel.rc, and the output
+  # root of tools/wllvm/extract_all.py; both git-ignored
+  su - "${user_name}" -c "mkdir -p /apollo/wllvm_bc /apollo/wllvm_linked"
+}
+
 function main() {
   local user_name="$1"
   local uid="$2"
@@ -102,6 +115,7 @@ function main() {
   setup_user_account_if_not_exist "$@"
   setup_apollo_directories "${uid}" "${gid}"
   grant_device_permissions "${user_name}"
+  setup_wllvm_toolchain "${user_name}"
 }
 
 main "${DOCKER_USER}" "${DOCKER_USER_ID}" "${DOCKER_GRP}" "${DOCKER_GRP_ID}"
