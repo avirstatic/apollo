@@ -157,3 +157,21 @@ build --cxxopt=-fPIC
 build --linkopt=-fuse-ld=gold
 build --linkopt=-Wl,--no-as-needed
 build --linkopt=-Wl,--allow-multiple-definition
+
+# Opt-in CUDA LLVM IR capture. Keep this after --config=gpu on the command line.
+# CUDA host bitcode participates in extract-bc; device IR is indexed separately.
+build:cuda_ir --config=gpu
+build:cuda_ir --define=using_cuda=true
+build:cuda_ir --define=using_cuda_nvcc=false
+build:cuda_ir --define=using_cuda_clang=true
+build:cuda_ir --action_env=TF_NEED_CUDA=1
+build:cuda_ir --action_env=TF_CUDA_CLANG=1
+build:cuda_ir --action_env=APOLLO_CUDA_IR=1
+# LLVM 14, installed by scripts/docker_start_user.sh
+build:cuda_ir --action_env=CLANG_CUDA_COMPILER_PATH=/opt/llvm-14/bin/clang++
+build:cuda_ir --action_env=WLLVM_BC_STORE=/apollo/wllvm_bc
+# Fixed GPU architecture, independent of the host GPU detected by bootstrap.py
+build:cuda_ir --action_env=TF_CUDA_COMPUTE_CAPABILITIES=7.5
+# This repository uses Bazel 3's cc_toolchain_suite selection.
+build:cuda_ir --noincompatible_enable_cc_toolchain_resolution
+build:cuda_ir --crosstool_top=@local_config_cuda//crosstool:toolchain
