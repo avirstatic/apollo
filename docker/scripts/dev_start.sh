@@ -574,6 +574,10 @@ function main() {
     set +x
 
     post_run_setup
+    if [ $? -ne 0 ];then
+        error "Failed to set up the user and the WLLVM toolchain in container \"${APOLLO_DEV}\""
+        exit 1
+    fi
 
     ok "Congratulations! You have successfully finished setting up Apollo Dev Environment."
     ok "To login into the newly created ${APOLLO_DEV} container, please run the following command:"

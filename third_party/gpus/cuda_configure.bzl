@@ -782,6 +782,9 @@ def _compute_cuda_extra_copts(repository_ctx, compute_capabilities, cuda_version
             # __CUDACC_VER_MAJOR__, which Clang does not define. Select the same
             # implementation as nvcc >= 9, required for sm_70+ with PTX >= 6.4.
             copts.append("-DCUB_USE_COOPERATIVE_GROUPS")
+        if int(cuda_version_major) >= 11:
+            # CUB's _CubLog uses va_printf under Clang, which Clang lacks.
+            copts.append("-D_CubLog(format,...)=printf(format,__VA_ARGS__)")
     for capability in compute_capabilities:
         if capability.startswith("compute_"):
             capability = capability.replace("compute_", "sm_")
@@ -1084,7 +1087,7 @@ def _create_local_cuda_repository(repository_ctx):
             repository_ctx.template(
                 "crosstool/clang/bin/cuda_ir",
                 Label("//tools/wllvm:CUDA"),
-                {},
+                {"%{clang_cuda_compiler_path}": cc_fullpath},
                 executable = True,
             )
             cuda_defines["%{host_compiler_path}"] = "clang/bin/cuda_ir"

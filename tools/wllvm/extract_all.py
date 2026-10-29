@@ -12,6 +12,7 @@ among those inputs contribute device modules, linked per GPU architecture into
 """
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 
 
 DEFAULT_SCOPE = ("kind('cc_(binary|test) rule', //modules/... + //cyber/...) "
@@ -27,7 +29,11 @@ DEFAULT_SCOPE = ("kind('cc_(binary|test) rule', //modules/... + //cyber/...) "
 
 
 def query_targets(bazel, scope):
-    output = subprocess.check_output([bazel, "query", scope], universal_newlines=True)
+    # --nofetch: use the external repositories as the build left them. query
+    # does not get the build's --action_env and would regenerate
+    # @local_config_cuda without CUDA.
+    output = subprocess.check_output([bazel, "query", "--nofetch", scope],
+                                     universal_newlines=True)
     return [line.strip() for line in output.splitlines() if line.startswith("//")]
 
 
@@ -175,7 +181,7 @@ def link(llvm_link, inputs, output, libdevice=None, duplicates=None):
 def extract_target(label, args):
     binary = label_path(args.bazel_bin, label)
     entry = {"label": label, "binary": str(binary)}
-    if not binary.exists():
+    if not binary.is_file():  # not built (a same-named directory is not a binary)
         entry["status"] = "not_built"
         return entry
     destination = args.output / label[2:].partition(":")[0]
@@ -235,6 +241,20 @@ def extract_target(label, args):
     return entry
 
 
+def default_jobs():
+    """Half the CPUs, capped so each job has ~3 GB of 70% of available memory.
+
+    The largest Apollo target peaks at about 2.4 GB in llvm-link.
+    """
+    available_kb = 0
+    with open("/proc/meminfo") as meminfo:
+        for line in meminfo:
+            if line.startswith("MemAvailable:"):
+                available_kb = int(line.split()[1])
+    by_memory = int(available_kb * 0.7 / (3 * 2**20))
+    return max(1, min((os.cpu_count() or 2) // 2, by_memory))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -245,11 +265,13 @@ def main():
                         help="File of labels; default queries cc_binary and cc_test rules")
     parser.add_argument("--scope", default=DEFAULT_SCOPE)
     parser.add_argument("--bazel", default="bazel")
-    parser.add_argument("--llvm-link", default="/usr/lib/llvm-10/bin/llvm-link")
-    parser.add_argument("--objcopy", default="/usr/lib/llvm-10/bin/llvm-objcopy")
+    parser.add_argument("--llvm-link", default="/opt/llvm-14/bin/llvm-link")
+    parser.add_argument("--objcopy", default="/opt/llvm-14/bin/llvm-objcopy")
     parser.add_argument("--libdevice", type=Path,
                         help="Link needed libdevice functions into device modules, "
                              "e.g. /usr/local/cuda/nvvm/libdevice/libdevice.10.bc")
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="Targets linked in parallel; default from CPUs and memory")
     args = parser.parse_args()
     args.output = args.output.absolute()
     args.store = args.store.absolute()
@@ -268,12 +290,32 @@ def main():
         labels = query_targets(args.bazel, args.scope)
     args.output.mkdir(parents=True, exist_ok=True)
 
-    index = []
-    for number, label in enumerate(labels, 1):
-        entry = extract_target(label, args)
-        index.append(entry)
-        print("[{}/{}] {} {}".format(number, len(labels), entry["status"], label),
-              file=sys.stderr, flush=True)
+    jobs = args.jobs or default_jobs()
+    print("Linking {} targets with {} jobs".format(len(labels), jobs),
+          file=sys.stderr, flush=True)
+    results = {}
+    lock = threading.Lock()
+
+    def run(label):
+        try:
+            entry = extract_target(label, args)
+        except Exception as error:  # keep the other targets going
+            entry = {"label": label, "status": "failed", "log": repr(error)}
+        with lock:
+            results[label] = entry
+            print("[{}/{}] {} {}".format(len(results), len(labels), entry["status"],
+                                         label), file=sys.stderr, flush=True)
+
+    # Each target links independently into its own files, so the outputs do
+    # not depend on the order in which targets finish.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        list(pool.map(run, labels))
+    # A link killed for memory under parallel load gets one serial retry.
+    for label in [l for l in labels if results[l]["status"] == "failed"]:
+        print("Retrying {}".format(label), file=sys.stderr, flush=True)
+        results.pop(label)
+        run(label)
+    index = [results[label] for label in labels]
     (args.output / "index.json").write_text(json.dumps(index, indent=2) + "\n")
     counts = {}
     for entry in index:

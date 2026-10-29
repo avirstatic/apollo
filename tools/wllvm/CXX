@@ -3,6 +3,8 @@
 export PATH=/usr/local/cuda/bin:/apollo/scripts:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
 export LLVM_COMPILER=clang
+# LLVM 14, installed by scripts/docker_start_user.sh
+export LLVM_COMPILER_PATH=/opt/llvm-14/bin
 export WLLVM_BC_STORE=/apollo/wllvm_bc
 export LLVM_BITCODE_GENERATION_FLAGS="-flto -fwhole-program-vtables"
 export THE_USER=$(whoami)
