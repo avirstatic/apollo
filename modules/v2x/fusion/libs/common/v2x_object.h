@@ -123,7 +123,7 @@ class Info3d : public Info<Eigen::Vector3d, Eigen::Matrix3d> {
   double height() const { return value_(2); }
 };
 
-struct alignas(16) Object {
+struct alignas(32) Object {
   typedef Info<bool, float> Infob;
   typedef Info<float, float> Infof;
   typedef Info<double, double> Infod;
@@ -221,7 +221,7 @@ struct alignas(16) Object {
 typedef std::shared_ptr<Object> ObjectPtr;
 typedef std::shared_ptr<const Object> ObjectConstPtr;
 
-struct alignas(16) ObjectList {
+struct alignas(32) ObjectList {
   ObjectList() = default;
   ~ObjectList() = default;
   ObjectList(const ObjectList &) = default;

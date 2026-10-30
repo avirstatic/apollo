@@ -13,6 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *****************************************************************************/
+#if defined(__clang__) && defined(__CUDA__)
+// Clang rejects Eigen 3.3.7's out-of-line definitions that omit
+// EIGEN_DEVICE_FUNC. The kernels here do not use Eigen, so include it
+// host-only in both compilation passes; nvcc is unaffected.
+#pragma push_macro("__CUDACC__")
+#pragma push_macro("__CUDA_ARCH__")
+#undef __CUDACC__
+#undef __CUDA_ARCH__
+#include "Eigen/Core"
+#pragma pop_macro("__CUDA_ARCH__")
+#pragma pop_macro("__CUDACC__")
+#endif
+
 #include "modules/perception/lidar/lib/detector/cnn_segmentation/feature_generator.h"
 
 #include "modules/perception/base/common.h"

@@ -25,12 +25,12 @@ namespace apollo {
 namespace perception {
 namespace base {
 
-struct alignas(16) RoadBoundary {
+struct alignas(32) RoadBoundary {
   PointCloud<PointD> left_boundary;
   PointCloud<PointD> right_boundary;
 };
 
-struct alignas(16) LaneBoundary {
+struct alignas(32) LaneBoundary {
   PointCloud<PointD> left_boundary;
   PointCloud<PointD> right_boundary;
 };
