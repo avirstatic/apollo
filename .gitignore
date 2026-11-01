@@ -89,3 +89,4 @@ modules/studio_connector
 
 # wllvm-bc
 wllvm_bc/
+wllvm_linked/

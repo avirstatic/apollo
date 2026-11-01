@@ -2,6 +2,8 @@ load("@rules_cc//cc:defs.bzl", "cc_toolchain", "cc_toolchain_suite")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["CUDA"])
+
 filegroup(
     name = "empty",
     srcs = [],
