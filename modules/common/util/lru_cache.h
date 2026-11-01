@@ -193,7 +193,7 @@ class LRUCache {
  private:
   static constexpr size_t kDefaultCapacity = 10;
 
-  const size_t capacity_;
+  size_t capacity_;
   size_t size_;
   std::map<K, Node<K, V>> map_;
   Node<K, V> head_;
