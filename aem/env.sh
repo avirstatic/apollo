@@ -29,6 +29,10 @@ export APOLLO_ENVS_ROOT=${APOLLO_ENVS_ROOT:-${HOME}/.aem/envs}
 export APOLLO_ENV_NAME="${USER}"
 export APOLLO_ENV_WORKSPACE="${APOLLO_ENV_WORKSPACE:-${PWD}}"
 export APOLLO_ENV_WORKROOT="${APOLLO_ENV_WORKROOT:-/apollo_workspace}"
+# Keep the environment (the opt and apollo volumes) in the workspace's .aem,
+# as `aem create --worklocal`, rather than in APOLLO_ENVS_ROOT under $HOME,
+# which may be a slow or small network file system
+export APOLLO_ENV_WORKLOCAL="${APOLLO_ENV_WORKLOCAL:-1}"
 export APOLLO_ENV_ARGS=()
 export APOLLO_ENV_BACKEND="${APOLLO_ENV_BACKEND:-docker}"
 export APOLLO_ENV_CONTAINER_PREFIX=${APOLLO_ENV_CONTAINER_PREFIX:-apollo_neo_dev_}
@@ -53,6 +57,14 @@ export AEM_FLAG_USE_GPU=${AEM_FLAG_USE_GPU:-1}
 export AEM_FLAG_SHM_SIZE=${AEM_FLAG_SHM_SIZE:-4G}
 
 export AEM_GEO=${AEM_GEO}
+
+# Hugging Face dataset that mirrors what Apollo serves only from the Baidu
+# servers (aem/publish_hf.sh): aem restores the dev image, the packages
+# buildtool installs, its package index, the perception models and the Bazel
+# repository cache from it. Empty: none of them. Its branch is named after
+# the git branch of this tree.
+export APOLLO_HF_REPO="${APOLLO_HF_REPO-avirstatic/apollo_dep}"
+export APOLLO_HF_REVISION="${APOLLO_HF_REVISION:-r10.0.1_wllvm}"
 
 # old env
 # TODO: will be removed in the future

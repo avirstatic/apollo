@@ -122,6 +122,70 @@ docker_image_exists() {
 }
 export -f docker_image_exists
 
+apollo_hf_artifact() {
+  # <kind>-<dev image tag>.tar.gz, as aem/publish_hf.sh names its archives
+  local image
+  image="$(apollo_determine_image)"
+  echo "${1}-${image##*:}.tar.gz"
+}
+export -f apollo_hf_artifact
+
+apollo_hf_fetch() {
+  # Download a file of the Hugging Face dataset APOLLO_HF_REPO (branch
+  # APOLLO_HF_REVISION) into the workspace's .cache/hf, in ranges over
+  # parallel connections that resume, and check it against the sha256
+  # Hugging Face reports. Prints its path.
+  local name="$1"
+  [[ -n "${APOLLO_HF_REPO}" ]] || return 1
+  local url="https://huggingface.co/datasets/${APOLLO_HF_REPO}/resolve/${APOLLO_HF_REVISION}/${name}"
+  local file="${APOLLO_ENV_WORKSPACE}/.cache/hf/${name}"
+  local headers size sha
+  headers="$(curl -fsSI --retry 5 "${url}" | tr -d '\r')" || return 1
+  size="$(awk 'tolower($1) == "x-linked-size:" {print $2}' <<< "${headers}")"
+  sha="$(awk -F'"' 'tolower($1) ~ /^x-linked-etag:/ {print $2}' <<< "${headers}")"
+  [[ "${size}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${sha}" =~ ^[0-9a-f]{64}$ ]] || sha=""
+  mkdir -p "${file}.parts" || return 1
+  info "downloading ${url} ($((size / 1048576))M) ..."
+  local jobs=8
+  local seg=$(((size + jobs - 1) / jobs))
+  local i pids=()
+  for ((i = 0; i < jobs && i * seg < size; i++)); do
+    (
+      start=$((i * seg))
+      end=$((start + seg - 1 < size - 1 ? start + seg - 1 : size - 1))
+      for attempt in $(seq 1 20); do
+        have=$(stat -c %s "${file}.parts/${i}" 2> /dev/null || echo 0)
+        ((have >= end - start + 1)) && exit 0
+        curl -fsL --retry 3 -r "$((start + have))-${end}" "${url}" >> "${file}.parts/${i}" ||
+          sleep 3
+      done
+      exit 1
+    ) &
+    pids+=($!)
+  done
+  local failed=0 pid
+  for pid in "${pids[@]}"; do
+    wait "${pid}" || failed=1
+  done
+  if [[ "${failed}" == 1 ]]; then
+    error "failed to download ${url}"
+    return 1
+  fi
+  : > "${file}"
+  for ((i = 0; i < ${#pids[@]}; i++)); do
+    cat "${file}.parts/${i}" >> "${file}" || return 1
+  done
+  rm -rf "${file}.parts"
+  if [[ -n "${sha}" ]] && ! echo "${sha}  ${file}" | sha256sum -c --status; then
+    error "checksum mismatch for ${url}"
+    rm -f "${file}"
+    return 1
+  fi
+  echo "${file}"
+}
+export -f apollo_hf_fetch
+
 docker_pull() {
   local img="${1}"
   local name_0="${img##/*}"
@@ -132,10 +196,19 @@ docker_pull() {
     fi
   fi
 
-  if [[ "${AEM_FLAG_USE_LOCAL_IMAGE}" == "1" ]] && docker_image_exists "${img}"; then
+  # Use a local image as is, else load the copy on Hugging Face, else pull it
+  if docker_image_exists "${img}"; then
     info "docker image ${img} already exists, skip pulling"
     return 0
   fi
+  local name="${img##*/}"
+  local file
+  if file="$(apollo_hf_fetch "${name/:/-}.tar.gz")" && docker load -i "${file}" &&
+    docker_image_exists "${img}"; then
+    rm -f "${file}"
+    return 0
+  fi
+  [[ -n "${APOLLO_HF_REPO}" ]] && warn "could not load ${img} from Hugging Face (${APOLLO_HF_REPO})"
   info "pulling docker image ${img} ..."
   if ! docker pull "${img}"; then
     if docker_image_exists "${img}"; then
@@ -271,6 +344,8 @@ apollo_create_envhome() {
   if [[ "${APOLLO_ENV_WORKLOCAL}" == "1" ]]; then
     env_home="${env_home_local}"
     env_root="${env_root_local}"
+    # the link to the global envroot that a non-worklocal environment left
+    [[ -L "${env_root_local}" ]] && rm -f "${env_root_local}"
     mkdir -p "${env_root_local}"/{apollo,etc,opt}
     if [[ -e "${env_root_global}" ]]; then
       warn "Symbolic link ${env_root_global} already exists. Remove it and create a new one."
@@ -671,6 +746,93 @@ apollo_container_download_arm_lib() {
 }
 export -f apollo_container_download_arm_lib
 
+apollo_patch_buildtool() {
+  # Fixes for apollo-neo-buildtool (aem/patches), each safe to run repeatedly.
+  # The volume backing /opt is only populated with the image/package content
+  # once the container actually starts, and `apt install --only-upgrade`
+  # reinstalls the original buildtool, so they are applied to every new
+  # container.
+  local patch
+  for patch in network_check index_cache offline_reinstall workspace_paths apt_redownload march; do
+    apollo_execute_cmd_in_container "python3 /opt/apollo/aem/patches/fix_buildtool_${patch}.py" ||
+      return 1
+  done
+}
+export -f apollo_patch_buildtool
+
+apollo_hf_restore_in_container() {
+  # Unpack an archive of APOLLO_HF_REPO into a directory of the container
+  local file
+  file="$(apollo_hf_fetch "$1")" || return 1
+  ${DOCKER} exec -i -u root "${APOLLO_ENV_CONTAINER_NAME}" tar -xzf - -C "$2" < "${file}" ||
+    return 1
+  rm -f "${file}"
+}
+export -f apollo_hf_restore_in_container
+
+apollo_restore_neo_deps() {
+  # The opt volume keeps the packages buildtool installs; an empty one is
+  # seeded from Hugging Face. The apt packages among them install outside the
+  # volume and buildtool checks them with `dpkg -l`, so they go into every new
+  # container as well (aem/neo_deps_state.py). Fails if the packages are not
+  # there.
+  if ! apollo_execute_cmd_in_container "test -f /opt/apollo/neo/.neo_deps/VERSION"; then
+    if ! apollo_hf_restore_in_container "$(apollo_hf_artifact neo-deps)" /opt/apollo/neo; then
+      warn "no packages for buildtool in /opt/apollo/neo or on Hugging Face" \
+        "(${APOLLO_HF_REPO:-APOLLO_HF_REPO unset}); build once with BUILDTOOL_ONLINE=1"
+      return 1
+    fi
+  fi
+  apollo_execute_cmd_in_container "python3 /opt/apollo/aem/neo_deps_state.py restore"
+}
+export -f apollo_restore_neo_deps
+
+apollo_restore_buildtool_index() {
+  # The patched buildtool reads its package index only locally
+  # (fix_buildtool_index_cache.py); restore it once into the opt volume
+  local dir="/opt/apollo/neo/share/buildtool"
+  apollo_execute_cmd_in_container "ls ${dir}/namespaces/*/Packages" > /dev/null 2>&1 && return 0
+  apollo_execute_cmd_in_container "mkdir -p ${dir}"
+  apollo_hf_restore_in_container "$(apollo_hf_artifact buildtool-index)" "${dir}" ||
+    warn "no package index for buildtool; build once with BUILDTOOL_ONLINE=1 BUILDTOOL_REFRESH_INDEX=1"
+}
+export -f apollo_restore_buildtool_index
+
+apollo_restore_perception_models() {
+  # buildtool downloads the model weights (not in git) when it finds no
+  # *.onnx or no *.pdmodel; restore them once into the workspace
+  local dir="${APOLLO_ENV_WORKSPACE}/modules/perception/data/models"
+  if [[ -n "$(find "${dir}" -name '*.onnx' -print -quit)" &&
+    -n "$(find "${dir}" -name '*.pdmodel' -print -quit)" ]]; then
+    return 0
+  fi
+  local file
+  if file="$(apollo_hf_fetch "$(apollo_hf_artifact perception-models)")" &&
+    tar -xzf "${file}" -C "${APOLLO_ENV_WORKSPACE}"; then
+    rm -f "${file}"
+  else
+    warn "no perception models from Hugging Face; buildtool downloads them"
+  fi
+}
+export -f apollo_restore_perception_models
+
+apollo_restore_bazel_repo_cache() {
+  # Bazel finds the WORKSPACE archives, several of them only on the Baidu
+  # servers, by sha256 in its repository cache (tools/bazel.rc); restore it
+  # once into the workspace
+  local cache="${APOLLO_ENV_WORKSPACE}/.cache/repos"
+  [[ -n "$(ls -A "${cache}/content_addressable/sha256" 2> /dev/null)" ]] && return 0
+  mkdir -p "${cache}"
+  local file
+  if file="$(apollo_hf_fetch "$(apollo_hf_artifact bazel-repo-cache)")" &&
+    tar -xzf "${file}" -C "${cache}"; then
+    rm -f "${file}"
+  else
+    warn "no Bazel repository cache from Hugging Face; Bazel downloads the archives"
+  fi
+}
+export -f apollo_restore_bazel_repo_cache
+
 apollo_container_created_post_action() {
   local init_packages=(
     'apollo-neo-buildtool'
@@ -678,17 +840,37 @@ apollo_container_created_post_action() {
   aem_path="${AEM_HOME}"
   container_aem_path="/opt/apollo/aem"
 
+  # A copy from an earlier container may be in the opt volume: replace it
+  apollo_execute_cmd_in_container "rm -rf ${container_aem_path}"
   ${DOCKER} cp "${aem_path}" "${APOLLO_ENV_CONTAINER_NAME}":"${container_aem_path}"
   apollo_execute_cmd_in_container "ln -snf ${container_aem_path}/aem /usr/bin/aem"
   apollo_execute_cmd_in_container "ln -snf ${container_aem_path}/auto_complete.bash /etc/bash_completion.d/aem"
   apollo_execute_cmd_in_container "ln -snf ${container_aem_path}/auto_complete.zsh /usr/share/zsh/functions/Completion/Unix/_aem"
   apollo_execute_cmd_in_container "[[ $(uname -m) == "aarch64" ]] && [[ -e /sys/kernel/debug ]] && chmod +rx /sys/kernel/debug"
-  apollo_execute_cmd_in_container "apt update && apt install --only-upgrade -y ${init_packages[@]}"
+  # Restored packages come with the buildtool they were installed with; only
+  # without them (or with APOLLO_UPGRADE_BUILDTOOL=1) ask the Baidu apt
+  # repository for the latest one
+  if ! apollo_restore_neo_deps || [[ "${APOLLO_UPGRADE_BUILDTOOL:-0}" == 1 ]]; then
+    apollo_execute_cmd_in_container "apt update && apt install --only-upgrade -y ${init_packages[@]}"
+  fi
+  if ! apollo_patch_buildtool; then
+    error "failed to patch buildtool in container ${APOLLO_ENV_CONTAINER_NAME}"
+    return 1
+  fi
+  apollo_restore_buildtool_index
   apollo_execute_cmd_in_container "chmod 777 /opt/apollo/neo/packages/buildtool/latest/setup.sh"
   apollo_execute_cmd_in_container "mkdir -pv /opt/apollo/neo/etc && chmod 777 -R /opt/apollo/neo/etc"
-  apollo_container_created_start_user
+  # buildtool writes its metadata under /opt/apollo/neo as the user; apt and
+  # the restores above leave what they unpack owned by root
+  apollo_execute_cmd_in_container "chown -R ${APOLLO_ENV_CONTAINER_UID}:${APOLLO_ENV_CONTAINER_GID} /opt/apollo/neo"
+  if ! apollo_container_created_start_user; then
+    error "failed to set up the user and the WLLVM toolchain in container ${APOLLO_ENV_CONTAINER_NAME}"
+    return 1
+  fi
   apollo_execute_cmd_in_container "mkdir -pv /apollo_workspace/data/{log,bag,record} &&
           chown -R ${APOLLO_ENV_CONTAINER_USER}:${APOLLO_ENV_CONTAINER_GROUP} /apollo_workspace/data/"
+  apollo_restore_perception_models
+  apollo_restore_bazel_repo_cache
   apollo_container_execute_cmd "buildtool -v"
   # TODO: migrate to active script like host env
   apollo_container_execute_cmd "echo [[ -e /opt/apollo/neo/setup.sh ]] \&\& source /opt/apollo/neo/setup.sh >> /home/${APOLLO_ENV_CONTAINER_USER}/.bashrc"
@@ -743,7 +925,13 @@ apollo_load_envconfig() {
   local env_home="${APOLLO_ENVS_ROOT}/${env_name}"
 
   if [[ -f "${env_home}/env.config" ]]; then
+    # --force and --force-volumes apply to this command only, and the Hugging
+    # Face mirror is set by this tree (env.sh): keep them over the saved ones
+    local current
+    current="$(declare -p AEM_FLAG_FORCE_RECREATE AEM_FLAG_FORCE_RECREATE_VOLUMES \
+      APOLLO_HF_REPO APOLLO_HF_REVISION 2> /dev/null | sed -e 's/^declare -[^ ]* /export /')"
     source "${env_home}/env.config"
+    eval "${current}"
   fi
 }
 export -f apollo_load_envconfig
@@ -764,6 +952,25 @@ apollo_save_envconfig() {
 }
 export -f apollo_save_envconfig
 
+apollo_clean_build_and_bitcode_caches() {
+  # WLLVM records only paths in each object's .llvm_bc section. Clear the Bazel
+  # outputs, its disk cache (--disk_cache, .cache/build) and wllvm_bc together
+  # so that a build never reuses objects whose bitcode is gone, and wllvm_bc
+  # holds only this build's captures. Linked IR from earlier builds
+  # (wllvm_linked) is removed as well.
+  local dir
+  for dir in "${APOLLO_ENV_WORKSPACE}/.cache/bazel" "${APOLLO_ENV_WORKSPACE}/.cache/build" \
+             "${APOLLO_ENV_WORKSPACE}/wllvm_bc" "${APOLLO_ENV_WORKSPACE}/wllvm_linked"; do
+    if [[ -e "${dir}" ]]; then
+      # Bazel leaves read-only directories behind.
+      chmod -R u+rwx "${dir}" 2> /dev/null
+      rm -rf "${dir}" || warn "failed to remove ${dir}"
+    fi
+  done
+  rm -f "${APOLLO_ENV_WORKSPACE}"/bazel-*
+}
+export -f apollo_clean_build_and_bitcode_caches
+
 apollo_create_container() {
 
   image="$(apollo_determine_image)"
@@ -771,6 +978,13 @@ apollo_create_container() {
     error "failed to pull docker image ${DEV_IMAGE}"
     exit 1
   fi
+
+  if docker_container_exists "${APOLLO_ENV_CONTAINER_NAME}"; then
+    apollo_remove_container
+  fi
+
+  info "cleaning Bazel outputs and disk cache, WLLVM bitcode and linked IR for a full rebuild..."
+  apollo_clean_build_and_bitcode_caches
 
   options=(
     '-itd'
@@ -806,7 +1020,7 @@ apollo_create_container() {
   set -x
   ${DOCKER} run "${options[@]}" "${image}" "${APOLLO_ENV_ARGS[@]}"
   set +x
-  apollo_container_created_post_action
+  apollo_container_created_post_action || return 1
   apollo_save_envconfig
 }
 export -f apollo_create_container
