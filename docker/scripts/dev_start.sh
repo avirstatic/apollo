@@ -20,8 +20,10 @@ TOP_DIR="${CURR_DIR}/../../aem"
 AEM="${TOP_DIR}/aem"
 
 function main() {
-  # aem runs its commands (aem, aem-*) from PATH: use the ones in this tree
-  PATH="${TOP_DIR}:${PATH}" ${AEM} start $@
+  # aem runs its commands (aem, aem-*) from PATH: use the ones in this tree.
+  # -f: a new container every time, whose creation cleans the Bazel outputs
+  # and the WLLVM bitcode for a full rebuild
+  PATH="${TOP_DIR}:${PATH}" ${AEM} start -f $@
 }
 
 main "$@"
