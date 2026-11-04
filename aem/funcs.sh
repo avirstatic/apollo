@@ -863,6 +863,12 @@ apollo_container_created_post_action() {
   # buildtool writes its metadata under /opt/apollo/neo as the user; apt and
   # the restores above leave what they unpack owned by root
   apollo_execute_cmd_in_container "chown -R ${APOLLO_ENV_CONTAINER_UID}:${APOLLO_ENV_CONTAINER_GID} /opt/apollo/neo"
+  # buildtool writes the library paths into the container's
+  # /etc/ld.so.conf.d/apollo.conf only when /opt/apollo/neo/lib differs from
+  # the hash it keeps in the opt volume (ld.cache), which a new container
+  # shares with the one before: drop the hash and write them now
+  apollo_execute_cmd_in_container "rm -f /opt/apollo/neo/ld.cache &&
+    bash /opt/apollo/neo/packages/buildtool/latest/scripts/update_dylib.sh > /dev/null"
   if ! apollo_container_created_start_user; then
     error "failed to set up the user and the WLLVM toolchain in container ${APOLLO_ENV_CONTAINER_NAME}"
     return 1

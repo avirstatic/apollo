@@ -276,6 +276,12 @@ function run_bazel_build() {
   for i in ${disabled_targets}; do
     build_targets=$(drop_targets "${i}" "${build_targets}")
   done
+  # buildtool builds the packages a cyberfile.xml depends on as a whole: for
+  # v2x all of perception-common, much of which calls CUDA. Without perception,
+  # build_cc_targets builds v2x with only the perception targets it uses.
+  if [[ " ${disabled_targets} " == *" modules/perception "* ]]; then
+    build_targets=$(drop_targets "modules/v2x" "${build_targets}")
+  fi
 
   # Note(storypku): Workaround for in case "/usr/bin/bazel: Argument list too long"
   # bazel build ${CMDLINE_OPTIONS} ${job_args} $(bazel query ${build_targets})
@@ -337,19 +343,21 @@ EOF
   fi
 
   # The cc_binary and cc_test rules of the packages buildtool builds (those
-  # with a cyberfile.xml), whose IR extract_linked_ir links
-  local scope="" package
+  # with a cyberfile.xml) but the disabled modules, whose packages need not
+  # even load (perception on CPU); extract_linked_ir links their IR
+  local disabled scope="" package skip d
+  disabled="$(determine_disabled_targets)"
   while read -r package; do
-    scope="${scope:+${scope} + }//${package}/..."
+    skip=0
+    for d in ${disabled}; do
+      [[ "${package}/" == "${d}/"* ]] && skip=1
+    done
+    [[ "${skip}" -eq 1 ]] || scope="${scope:+${scope} + }//${package}/..."
   done < <(cd "${TOP_DIR}" && find cyber modules -name cyberfile.xml -printf '%h\n' | sort)
   bazel query --nofetch "kind('cc_(binary|test) rule', ${scope})" > "${CC_TARGETS_FILE}"
 
-  # Built like target patterns do (not those tagged manual), except the
-  # disabled modules; extract_all.py records what did not build as not_built
-  local disabled
-  for disabled in $(determine_disabled_targets); do
-    scope="(${scope}) - //${disabled}/..."
-  done
+  # Built like target patterns do (not those tagged manual); extract_all.py
+  # records what did not build as not_built
   local targets="${APOLLO_CACHE_DIR}/cc_build_targets.txt"
   bazel query --nofetch "let packages = ${scope} in
     kind('cc_(binary|test) rule', \$packages) except attr(tags, '\\bmanual\\b', \$packages)" \
