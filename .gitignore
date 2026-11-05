@@ -85,3 +85,13 @@ tools/FlameGraph
 modules/studio_connector
 
 #WORKSPACE
+
+# aem and buildtool
+/.aem/
+/dev/
+/__MACOSX/
+/modules/perception/data/models/
+/third_party/bazel_skylib
+/third_party/grpc
+/third_party/rules_proto
+/third_party/rules_python

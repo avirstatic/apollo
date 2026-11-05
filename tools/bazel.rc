@@ -15,6 +15,9 @@ fetch --experimental_multi_threaded_digest=true
 # +------------------------------------------------------------+
 # Force bazel output to use colors (good for jenkins) and print useful errors.
 common --color=yes
+# The downloaded WORKSPACE archives; aem restores it from Hugging Face
+# (aem/publish_hf.sh)
+common --repository_cache=/apollo_workspace/.cache/repos
 
 # +------------------------------------------------------------+
 # | Build Configurations                                       |
