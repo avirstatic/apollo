@@ -32,7 +32,7 @@ namespace apollo {
 namespace perception {
 namespace camera {
 
-struct alignas(16) Target {
+struct alignas(32) Target {
  public:
   // EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   explicit Target(const TargetParam &param);
