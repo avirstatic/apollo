@@ -21,7 +21,8 @@ import os
 from pathlib import Path
 
 TARGET_PATH=[]
-ROOT="/apollo"
+# the source tree this script is in (/apollo_workspace in an aem container)
+ROOT=str(Path(__file__).resolve().parent.parent)
 
 def search_cyberfile(root):
     """

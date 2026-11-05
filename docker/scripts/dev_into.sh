@@ -20,7 +20,8 @@ TOP_DIR="${CURR_DIR}/../../aem"
 AEM="${TOP_DIR}/aem"
 
 function main() {
-  ${AEM} enter $@
+  # aem runs its commands (aem, aem-*) from PATH: use the ones in this tree
+  PATH="${TOP_DIR}:${PATH}" ${AEM} enter $@
 }
 
 main "$@" 

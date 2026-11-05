@@ -256,6 +256,11 @@ function run_bazel_build() {
   for i in ${disabled_targets}; do
     build_targets=$(drop_targets "${i}" "${build_targets}")
   done
+  # buildtool builds the packages a cyberfile.xml depends on as a whole: for
+  # v2x all of perception-common, much of which calls CUDA
+  if [[ " ${disabled_targets} " == *" modules/perception "* ]]; then
+    build_targets=$(drop_targets "modules/v2x" "${build_targets}")
+  fi
 
   # Note(storypku): Workaround for in case "/usr/bin/bazel: Argument list too long"
   # bazel build ${CMDLINE_OPTIONS} ${job_args} $(bazel query ${build_targets})
@@ -274,9 +279,10 @@ function run_bazel_build() {
   local job_args="-j=$(nproc) -m=0.7"
   [[ -z $ACTION ]] && ACTION="build"
   [[ $ACTION == "test" ]] && job_args="" && CMDLINE_OPTIONS=""
-  buildtool $ACTION ${CMDLINE_OPTIONS} ${job_args} -p ${build_targets} ${ADDTIONAL_OPTIONS}
-
-  [[ $? -ne 0 ]] && error "Build failed!" && exit -1
+  if ! buildtool $ACTION ${CMDLINE_OPTIONS} ${job_args} -p ${build_targets} ${ADDTIONAL_OPTIONS}; then
+    error "Build failed!"
+    exit -1
+  fi
 }
 
 function main() {
