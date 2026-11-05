@@ -338,6 +338,24 @@ function setup_devices_and_mount_local_volumes() {
   eval "${__retval}='${volumes}'"
 }
 
+function clean_build_and_bitcode_caches() {
+  # WLLVM records only paths in each object's .llvm_bc section. Clear the Bazel
+  # outputs, its disk cache (--disk_cache, .cache/build) and wllvm_bc together
+  # so that a build never reuses objects whose bitcode is gone, and wllvm_bc
+  # holds only this build's captures. Linked IR from earlier builds
+  # (wllvm_linked) is removed as well.
+  local dir
+  for dir in "${CACHE_ROOT_DIR}/bazel" "${CACHE_ROOT_DIR}/build" \
+             "${APOLLO_ROOT_DIR}/wllvm_bc" "${APOLLO_ROOT_DIR}/wllvm_linked"; do
+    if [ -e "${dir}" ]; then
+      # Bazel leaves read-only directories behind.
+      chmod -R u+rwx "${dir}" 2>/dev/null
+      rm -rf "${dir}" || warning "Failed to remove ${dir}"
+    fi
+  done
+  rm -f "${APOLLO_ROOT_DIR}"/bazel-*
+}
+
 function docker_pull() {
   local img="$1"
   if [[ "${USE_LOCAL_IMAGE}" -gt 0 ]]; then
@@ -458,6 +476,9 @@ function main() {
   info "Remove existing Apollo Development container ..."
   remove_container_if_exists ${DEV_CONTAINER}
 
+  info "Clean Bazel outputs and disk cache, WLLVM bitcode and linked IR for a full rebuild ..."
+  clean_build_and_bitcode_caches
+
   local local_volumes=
   setup_devices_and_mount_local_volumes local_volumes
 
@@ -520,6 +541,10 @@ function main() {
   set +x
 
   postrun_start_user "${DEV_CONTAINER}"
+  if [ $? -ne 0 ]; then
+    error "Failed to set up the user and the WLLVM toolchain in container \"${DEV_CONTAINER}\""
+    exit 1
+  fi
   postrun_cross_platfrom_download "${DEV_CONTAINER}" "${CROSS_PLATFORM_FLAG}"
 
   ok "Congratulations! You have successfully finished setting up Apollo Dev Environment."

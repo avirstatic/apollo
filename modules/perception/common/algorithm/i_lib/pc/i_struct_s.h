@@ -482,7 +482,7 @@ class VoxelGridXY {
 
   const T *const_data() const { return (data_); }
 
-  int *SemanticData() { return (semantic_data_); }
+  const int *SemanticData() { return (semantic_data_); }
 
   const int *const_semantic_data() const { return (semantic_data_); }
 
