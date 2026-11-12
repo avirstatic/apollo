@@ -299,7 +299,7 @@ bool OMTBEVTracker::CombineDuplicateTargets() {
 
   std::sort(score_list.begin(), score_list.end(),
             std::greater<HypothesisBev>());
-  bool used_target[targets_.size()] = {false};
+  std::vector<bool> used_target(targets_.size(), false);
   for (const auto& pair : score_list) {
     if (used_target[pair.target_idx] || used_target[pair.object_idx]) {
       continue;
@@ -461,8 +461,8 @@ bool OMTBEVTracker::Associate3D(const ObstacleTrackerOptions& options,
 
   std::sort(score_list.begin(), score_list.end(),
             std::greater<HypothesisBev>());
-  bool used_target[targets_.size()] = {false};
-  bool used_object[track_objects.size()] = {false};
+  std::vector<bool> used_target(targets_.size(), false);
+  std::vector<bool> used_object(track_objects.size(), false);
   for (const auto& hypo : score_list) {
     int target_idx = hypo.target_idx;
     int object_idx = hypo.object_idx;

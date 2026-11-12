@@ -13,6 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *****************************************************************************/
+#if defined(__clang__) && defined(__CUDA__)
+// Clang rejects Eigen 3.3.7's out-of-line definitions that omit
+// EIGEN_DEVICE_FUNC. The kernels here do not use Eigen, so include it
+// host-only in both compilation passes; nvcc is unaffected.
+#pragma push_macro("__CUDACC__")
+#pragma push_macro("__CUDA_ARCH__")
+#undef __CUDACC__
+#undef __CUDA_ARCH__
+#include "Eigen/Core"
+#pragma pop_macro("__CUDA_ARCH__")
+#pragma pop_macro("__CUDACC__")
+#endif
+
 #include <algorithm>
 #include <functional>
 #include <map>
@@ -57,10 +70,12 @@ __host__ __device__ float jaccard_overlap_gpu(const float *bbox1,
       bbox2[3] < bbox1[1]) {
     return float(0.);  // NOLINT
   } else {
-    const float inter_xmin = max(bbox1[0], bbox2[0]);
-    const float inter_ymin = max(bbox1[1], bbox2[1]);
-    const float inter_xmax = min(bbox1[2], bbox2[2]);
-    const float inter_ymax = min(bbox1[3], bbox2[3]);
+    // fmaxf/fminf: what CUDA's max/min(float, float) call, and host-callable
+    // under Clang too.
+    const float inter_xmin = fmaxf(bbox1[0], bbox2[0]);
+    const float inter_ymin = fmaxf(bbox1[1], bbox2[1]);
+    const float inter_xmax = fminf(bbox1[2], bbox2[2]);
+    const float inter_ymax = fminf(bbox1[3], bbox2[3]);
 
     const float inter_width = inter_xmax - inter_xmin;
     const float inter_height = inter_ymax - inter_ymin;
