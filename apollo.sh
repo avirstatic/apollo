@@ -111,7 +111,7 @@ function _usage() {
     ${BLUE}build_dbg [module]${NO_COLOR}: run debug build.
     ${BLUE}build_opt [module]${NO_COLOR}: run optimized build.
     ${BLUE}build_cpu [module]${NO_COLOR}: build in CPU mode. Equivalent to 'bazel build --config=cpu'
-    ${BLUE}build_gpu [module]${NO_COLOR}: run build in GPU mode. Equivalent to 'bazel build --config=gpu'
+    ${BLUE}build_gpu [module]${NO_COLOR}: run build in GPU mode. Equivalent to 'bazel build --config=gpu --config=cuda_ir'
     ${BLUE}build_opt_gpu [module]${NO_COLOR}: optimized build in GPU mode. Equivalent to 'bazel build --config=opt --config=gpu'
     ${BLUE}test [module]${NO_COLOR}: run unittest for cyber (module='cyber') or modules/<module>. If unspecified, test all.
     ${BLUE}coverage [module]${NO_COLOR}: run coverage test for cyber (module='cyber') or modules/<module>. If unspecified, coverage all.
@@ -159,7 +159,8 @@ function main() {
             env ${APOLLO_ENV} bash "${build_sh}" --config=cpu "$@"
             ;;
         build_gpu)
-            env ${APOLLO_ENV} bash "${build_sh}" --config=gpu "$@"
+            # cuda_ir must follow gpu: Clang + WLLVM for CUDA instead of nvcc
+            env ${APOLLO_ENV} bash "${build_sh}" --config=gpu --config=cuda_ir "$@"
             ;;
         build_opt_gpu)
             env ${APOLLO_ENV} bash "${build_sh}" --config=opt --config=gpu "$@"

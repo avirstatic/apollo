@@ -30,7 +30,7 @@ namespace apollo {
 namespace perception {
 namespace base {
 
-struct alignas(16) LidarObjectSupplement {
+struct alignas(32) LidarObjectSupplement {
   void Reset() {
     is_orientation_ready = false;
     on_use = false;
@@ -74,7 +74,7 @@ typedef std::shared_ptr<LidarObjectSupplement> LidarObjectSupplementPtr;
 typedef std::shared_ptr<const LidarObjectSupplement>
     LidarObjectSupplementConstPtr;
 
-struct alignas(16) RadarObjectSupplement {
+struct alignas(32) RadarObjectSupplement {
   void Reset() {
     on_use = false;
     range = 0.0f;
@@ -100,7 +100,7 @@ typedef std::shared_ptr<RadarObjectSupplement> RadarObjectSupplementPtr;
 typedef std::shared_ptr<const RadarObjectSupplement>
     RadarObjectSupplementConstPtr;
 
-struct alignas(16) CameraObjectSupplement {
+struct alignas(32) CameraObjectSupplement {
   CameraObjectSupplement() { Reset(); }
 
   void Reset() {
@@ -185,7 +185,7 @@ typedef std::shared_ptr<const CameraObjectSupplement>
     CameraObjectSupplementConstPtr;
 
 typedef Eigen::Matrix4f MotionType;
-struct alignas(16) VehicleStatus {
+struct alignas(32) VehicleStatus {
   float roll_rate = 0;
   float pitch_rate = 0;
   float yaw_rate = 0;
@@ -202,7 +202,7 @@ typedef boost::circular_buffer<VehicleStatus> MotionBuffer;
 typedef std::shared_ptr<MotionBuffer> MotionBufferPtr;
 typedef std::shared_ptr<const MotionBuffer> MotionBufferConstPtr;
 
-struct alignas(16) Vehicle3DStatus {
+struct alignas(32) Vehicle3DStatus {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   float yaw_delta;  // azimuth angle change
@@ -245,7 +245,7 @@ struct SensorObjectMeasurement {
   BBox2D<float> box;
 };
 
-struct alignas(16) FusionObjectSupplement {
+struct alignas(32) FusionObjectSupplement {
   FusionObjectSupplement() { measurements.reserve(5); }
   void Reset() {
     on_use = false;

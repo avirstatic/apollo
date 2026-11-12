@@ -368,6 +368,23 @@ function remove_existing_dev_container() {
     fi
 }
 
+function clean_build_and_bitcode_caches() {
+    # WLLVM records only paths in each object's .llvm_bc section. Clear the Bazel
+    # outputs and wllvm_bc together so that a build never reuses objects whose
+    # bitcode is gone, and wllvm_bc holds only this build's captures. Linked IR
+    # from earlier builds (wllvm_linked) is removed as well.
+    local dir
+    for dir in "${CACHE_ROOT_DIR}/bazel" "${APOLLO_ROOT_DIR}/wllvm_bc" \
+               "${APOLLO_ROOT_DIR}/wllvm_linked"; do
+        if [ -e "${dir}" ]; then
+            # Bazel leaves read-only directories behind.
+            chmod -R u+rwx "${dir}" 2>/dev/null
+            rm -rf "${dir}" || warning "Failed to remove ${dir}"
+        fi
+    done
+    rm -f "${APOLLO_ROOT_DIR}"/bazel-*
+}
+
 function docker_pull() {
     local img="$1"
     if [ "${USE_LOCAL_IMAGE}" = "yes" ];then
@@ -499,6 +516,9 @@ function main() {
     info "Check and remove existing Apollo dev container ..."
     remove_existing_dev_container
 
+    info "Clean Bazel outputs, WLLVM bitcode and linked IR for a full rebuild ..."
+    clean_build_and_bitcode_caches
+
     info "Determine whether host GPU is available ..."
     determine_gpu_use_host
     info "USE_GPU_HOST: ${USE_GPU_HOST}"
@@ -554,6 +574,10 @@ function main() {
     set +x
 
     post_run_setup
+    if [ $? -ne 0 ];then
+        error "Failed to set up the user and the WLLVM toolchain in container \"${APOLLO_DEV}\""
+        exit 1
+    fi
 
     ok "Congratulations! You have successfully finished setting up Apollo Dev Environment."
     ok "To login into the newly created ${APOLLO_DEV} container, please run the following command:"
