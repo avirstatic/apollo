@@ -251,6 +251,32 @@ function run_bazel_build() {
   bazel build ${CMDLINE_OPTIONS} ${job_args} -- ${formatted_targets}
 }
 
+function extract_linked_ir() {
+  # CPU builds and --config=cuda_ir compile every C/C++ action through WLLVM
+  # (tools/wllvm), so a full build can be linked into whole-program IR per
+  # cc_binary and cc_test. wllvm_linked holds only the latest build's IR.
+  if [[ "${USE_GPU}" -eq 1 && "${CMDLINE_OPTIONS}" != *"--config=cuda_ir"* ]]; then
+    warning "GPU build without --config=cuda_ir uses nvcc/gcc, not WLLVM; skip" \
+      "LLVM IR linking. Use './apollo.sh build_gpu' for bitcode."
+    return
+  fi
+  local output="${APOLLO_ROOT_DIR}/wllvm_linked"
+  rm -rf "${output:?}"/*
+  local libdevice="/usr/local/cuda/nvvm/libdevice/libdevice.10.bc"
+  local opts=()
+  if [ "${USE_GPU}" -eq 1 ] && [ -f "${libdevice}" ]; then
+    opts+=(--libdevice "${libdevice}")
+  fi
+  info "Linking LLVM IR for each cc_binary and cc_test into ${output} ..."
+  if python3 "${APOLLO_ROOT_DIR}/tools/wllvm/extract_all.py" \
+      --output "${output}" "${opts[@]}"; then
+    ok "Linked LLVM IR written to ${output}"
+  else
+    error "LLVM IR linking failed for some targets; see ${output}/index.json"
+    exit 1
+  fi
+}
+
 function main() {
   if ! "${APOLLO_IN_DOCKER}"; then
     error "The build operation must be run from within docker container"
@@ -263,6 +289,7 @@ function main() {
 
   if [ -z "${SHORTHAND_TARGETS}" ]; then
     SHORTHAND_TARGETS="apollo"
+    extract_linked_ir
   fi
 
   success "Done building ${SHORTHAND_TARGETS}. Enjoy!"
