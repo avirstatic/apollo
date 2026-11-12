@@ -753,7 +753,7 @@ apollo_patch_buildtool() {
   # reinstalls the original buildtool, so they are applied to every new
   # container.
   local patch
-  for patch in network_check index_cache offline_reinstall workspace_paths apt_redownload; do
+  for patch in network_check index_cache offline_reinstall workspace_paths apt_redownload march; do
     apollo_execute_cmd_in_container "python3 /opt/apollo/aem/patches/fix_buildtool_${patch}.py" ||
       return 1
   done
@@ -870,7 +870,7 @@ apollo_container_created_post_action() {
   apollo_execute_cmd_in_container "rm -f /opt/apollo/neo/ld.cache &&
     bash /opt/apollo/neo/packages/buildtool/latest/scripts/update_dylib.sh > /dev/null"
   if ! apollo_container_created_start_user; then
-    error "failed to set up the user in container ${APOLLO_ENV_CONTAINER_NAME}"
+    error "failed to set up the user and the WLLVM toolchain in container ${APOLLO_ENV_CONTAINER_NAME}"
     return 1
   fi
   apollo_execute_cmd_in_container "mkdir -pv /apollo_workspace/data/{log,bag,record} &&
@@ -958,6 +958,25 @@ apollo_save_envconfig() {
 }
 export -f apollo_save_envconfig
 
+apollo_clean_build_and_bitcode_caches() {
+  # WLLVM records only paths in each object's .llvm_bc section. Clear the Bazel
+  # outputs, its disk cache (--disk_cache, .cache/build) and wllvm_bc together
+  # so that a build never reuses objects whose bitcode is gone, and wllvm_bc
+  # holds only this build's captures. Linked IR from earlier builds
+  # (wllvm_linked) is removed as well.
+  local dir
+  for dir in "${APOLLO_ENV_WORKSPACE}/.cache/bazel" "${APOLLO_ENV_WORKSPACE}/.cache/build" \
+             "${APOLLO_ENV_WORKSPACE}/wllvm_bc" "${APOLLO_ENV_WORKSPACE}/wllvm_linked"; do
+    if [[ -e "${dir}" ]]; then
+      # Bazel leaves read-only directories behind.
+      chmod -R u+rwx "${dir}" 2> /dev/null
+      rm -rf "${dir}" || warn "failed to remove ${dir}"
+    fi
+  done
+  rm -f "${APOLLO_ENV_WORKSPACE}"/bazel-*
+}
+export -f apollo_clean_build_and_bitcode_caches
+
 apollo_create_container() {
 
   image="$(apollo_determine_image)"
@@ -969,6 +988,9 @@ apollo_create_container() {
   if docker_container_exists "${APOLLO_ENV_CONTAINER_NAME}"; then
     apollo_remove_container
   fi
+
+  info "cleaning Bazel outputs and disk cache, WLLVM bitcode and linked IR for a full rebuild..."
+  apollo_clean_build_and_bitcode_caches
 
   options=(
     '-itd'

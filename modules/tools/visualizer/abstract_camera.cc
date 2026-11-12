@@ -24,12 +24,12 @@ QMatrix4x4 AbstractCamera::YawPitchRoll(float yaw, float pitch, float roll) {
   pitch = Radians(pitch);
   roll = Radians(roll);
 
-  register float tmpCy = std::cos(yaw);
-  register float tmpSy = std::sin(yaw);
-  register float tmpCp = std::cos(pitch);
-  register float tmpSp = std::sin(pitch);
-  register float tmpCr = std::cos(roll);
-  register float tmpSr = std::sin(roll);
+  float tmpCy = std::cos(yaw);
+  float tmpSy = std::sin(yaw);
+  float tmpCp = std::cos(pitch);
+  float tmpSp = std::sin(pitch);
+  float tmpCr = std::cos(roll);
+  float tmpSr = std::sin(roll);
 
   QMatrix4x4 Result;
   Result(0, 0) = tmpCy * tmpCr + tmpSy * tmpSp * tmpSr;

@@ -20,6 +20,9 @@ set -e
 
 TOP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "${TOP_DIR}/scripts/apollo.bashrc"
+# buildtool puts the Bazel output root (.apollo.bazelrc) under APOLLO_CACHE_DIR:
+# keep it on the workspace disk rather than in the /apollo volume
+export APOLLO_CACHE_DIR="${TOP_DIR}/.cache"
 
 ARCH="$(uname -m)"
 
@@ -35,6 +38,8 @@ SHORTHAND_TARGETS=
 DISABLED_TARGETS=
 ACTION=
 APOLLO_BUILD=0
+BUILD_EVENT_FILE="${APOLLO_CACHE_DIR}/build_events.json"
+CC_TARGETS_FILE="${APOLLO_CACHE_DIR}/cc_targets.txt"
 
 function _determine_perception_disabled() {
   if [ "${USE_GPU}" -eq 0 ]; then
@@ -136,13 +141,13 @@ function _chk_n_set_opt_arg() {
 function parse_cmdline_arguments() {
   # local known_options=""
   local remained_args=""
+  local additional_args=""
 
   for ((pos = 1; pos <= $#; pos++)); do #do echo "$#" "$i" "${!i}"; done
     local opt="${!pos}"
     local optarg
     local gpuset=1
     local optset=1
-    local additional_args=
 
     case "${opt}" in
       --test)
@@ -157,7 +162,7 @@ function parse_cmdline_arguments() {
           _chk_n_set_gpu_arg "${optarg}"
           _chk_n_set_opt_arg "${optarg}"
         else
-          additional_args="${additional_args} \-\-config=${optarg}"
+          additional_args="${additional_args} \'--config=${optarg}\'"
         fi
         ;;
       --config)
@@ -167,7 +172,7 @@ function parse_cmdline_arguments() {
           _chk_n_set_gpu_arg "${optarg}"
           _chk_n_set_opt_arg "${optarg}"
         else
-          additional_args="${additional_args} \-\-config=${optarg}"  
+          additional_args="${additional_args} \'--config=${optarg}\'"
         fi
         ;;
       *)
@@ -177,7 +182,7 @@ function parse_cmdline_arguments() {
   done
   # Strip leading whitespaces
   remained_args="$(echo "${remained_args}" | sed -e 's/^[[:space:]]*//')"
-  [[ ! -z ${additional_args} ]] && ADDTIONAL_OPTIONS="-a \"${additional_args}\""
+  ADDTIONAL_OPTIONS="${additional_args}"
   CMDLINE_OPTIONS="${known_options}"
   SHORTHAND_TARGETS="${remained_args}"
 }
@@ -209,8 +214,8 @@ function determine_build_arguments() {
   fi
 
   if [ "${USE_OPT}" -lt 0 ]; then
-    # unset, defaults to use opt to build
-    CMDLINE_OPTIONS="--opt ${CMDLINE_OPTIONS}"
+    # unset, defaults to the O0 debug build, as 'build --config=dbg' in tools/bazel.rc
+    CMDLINE_OPTIONS="--dbg ${CMDLINE_OPTIONS}"
   else 
     if [ "${USE_OPT}" -eq 0 ]; then
       CMDLINE_OPTIONS="--dbg ${CMDLINE_OPTIONS}"
@@ -237,16 +242,31 @@ function drop_targets() {
 }
 
 function run_bazel_build() {
-  # Add profiler
-  if $ENABLE_PROFILER; then
-    # CMDLINE_OPTIONS="${CMDLINE_OPTIONS} --define ENABLE_PROFILER=${ENABLE_PROFILER}"
-    CMDLINE_OPTIONS="${CMDLINE_OPTIONS} -a \'--define\' \'ENABLE_PROFILER=${ENABLE_PROFILER}\'"
+  [[ -z $ACTION ]] && ACTION="build"
+  [[ -z ${SHORTHAND_TARGETS} ]] && APOLLO_BUILD=1
+
+  # buildtool keeps only the last -a, so all Bazel options go in one
+  local bazel_args="${ADDTIONAL_OPTIONS}"
+  if [[ $ACTION == "test" ]]; then
+    CMDLINE_OPTIONS=""
+  else
+    # Add profiler
+    if $ENABLE_PROFILER; then
+      # CMDLINE_OPTIONS="${CMDLINE_OPTIONS} --define ENABLE_PROFILER=${ENABLE_PROFILER}"
+      bazel_args="${bazel_args} \'--define\' \'ENABLE_PROFILER=${ENABLE_PROFILER}\'"
+    fi
+    # The Bazel options of a full build, for build_cc_targets
+    if [ "${APOLLO_BUILD}" -eq 1 ]; then
+      mkdir -p "$(dirname "${BUILD_EVENT_FILE}")"
+      rm -f "${BUILD_EVENT_FILE}"
+      bazel_args="${bazel_args} \'--build_event_json_file=${BUILD_EVENT_FILE}\'"
+    fi
   fi
+  [[ -n "${bazel_args}" ]] && CMDLINE_OPTIONS="${CMDLINE_OPTIONS} -a ${bazel_args}"
 
   CMDLINE_OPTIONS="$(echo ${CMDLINE_OPTIONS} | xargs)"
 
   local build_targets
-  [[ -z ${SHORTHAND_TARGETS} ]] && APOLLO_BUILD=1
   build_targets="$(determine_build_targets ${SHORTHAND_TARGETS})"
 
   local disabled_targets
@@ -257,7 +277,8 @@ function run_bazel_build() {
     build_targets=$(drop_targets "${i}" "${build_targets}")
   done
   # buildtool builds the packages a cyberfile.xml depends on as a whole: for
-  # v2x all of perception-common, much of which calls CUDA
+  # v2x all of perception-common, much of which calls CUDA. Without perception,
+  # build_cc_targets builds v2x with only the perception targets it uses.
   if [[ " ${disabled_targets} " == *" modules/perception "* ]]; then
     build_targets=$(drop_targets "modules/v2x" "${build_targets}")
   fi
@@ -277,11 +298,101 @@ function run_bazel_build() {
   info "${TAB}Disabled:          ${YELLOW}${disabled_targets}${NO_COLOR}"
 
   local job_args="-j=$(nproc) -m=0.7"
-  [[ -z $ACTION ]] && ACTION="build"
-  [[ $ACTION == "test" ]] && job_args="" && CMDLINE_OPTIONS=""
-  if ! buildtool $ACTION ${CMDLINE_OPTIONS} ${job_args} -p ${build_targets} ${ADDTIONAL_OPTIONS}; then
+  [[ $ACTION == "test" ]] && job_args=""
+  if ! buildtool $ACTION ${CMDLINE_OPTIONS} ${job_args} -p ${build_targets}; then
     error "Build failed!"
     exit -1
+  fi
+}
+
+function build_cc_targets() {
+  # buildtool builds what apollo_package() installs, which leaves out testonly
+  # targets such as cc_test. Build every cc_binary and cc_test with the Bazel
+  # options of buildtool's last command, read from its build event log: what
+  # buildtool built is up to date, so only the rest is compiled.
+  local options=()
+  mapfile -t options < <(python3 - "${BUILD_EVENT_FILE}" << 'EOF'
+import json
+import sys
+
+with open(sys.argv[1]) as events:
+    for line in events:
+        command = json.loads(line).get("structuredCommandLine", {})
+        if command.get("commandLineLabel") == "original":
+            break
+    else:
+        sys.exit("No command line in " + sys.argv[1])
+for section in command["sections"]:
+    if section["sectionLabel"] != "command options":
+        continue
+    for option in section["optionList"].get("option", []):
+        # Bazel's client adds hidden options, e.g. --client_env
+        if "HIDDEN" in option.get("metadataTags", []) or \
+                option["optionName"] == "build_event_json_file":
+            continue
+        form = option["combinedForm"]
+        if " " in form:
+            # Given as two arguments, e.g. --define NAME=VALUE
+            form = "--{}={}".format(option["optionName"], option["optionValue"])
+        print(form)
+EOF
+  )
+  if [ "${#options[@]}" -eq 0 ]; then
+    error "No Bazel options of buildtool found in ${BUILD_EVENT_FILE}"
+    exit 1
+  fi
+
+  # The cc_binary and cc_test rules of the packages buildtool builds (those
+  # with a cyberfile.xml) but the disabled modules, whose packages need not
+  # even load (perception on CPU); extract_linked_ir links their IR
+  local disabled scope="" package skip d
+  disabled="$(determine_disabled_targets)"
+  while read -r package; do
+    skip=0
+    for d in ${disabled}; do
+      [[ "${package}/" == "${d}/"* ]] && skip=1
+    done
+    [[ "${skip}" -eq 1 ]] || scope="${scope:+${scope} + }//${package}/..."
+  done < <(cd "${TOP_DIR}" && find cyber modules -name cyberfile.xml -printf '%h\n' | sort)
+  bazel query --nofetch "kind('cc_(binary|test) rule', ${scope})" > "${CC_TARGETS_FILE}"
+
+  # Built like target patterns do (not those tagged manual); extract_all.py
+  # records what did not build as not_built
+  local targets="${APOLLO_CACHE_DIR}/cc_build_targets.txt"
+  bazel query --nofetch "let packages = ${scope} in
+    kind('cc_(binary|test) rule', \$packages) except attr(tags, '\\bmanual\\b', \$packages)" \
+    > "${targets}"
+  info "Building every cc_binary and cc_test with the Bazel options of buildtool ..."
+  if ! bazel build "${options[@]}" --keep_going --target_pattern_file="${targets}"; then
+    warning "Some cc_binary or cc_test targets failed to build; the LLVM IR index" \
+      "lists them as not_built"
+  fi
+}
+
+function extract_linked_ir() {
+  # CPU builds and --config=cuda_ir compile every C/C++ action through WLLVM
+  # (tools/wllvm), so a full build can be linked into whole-program IR per
+  # cc_binary and cc_test. wllvm_linked holds only the latest build's IR.
+  if [[ "${USE_GPU}" -eq 1 && "${ADDTIONAL_OPTIONS}" != *"--config=cuda_ir"* ]]; then
+    warning "GPU build without --config=cuda_ir uses nvcc/gcc, not WLLVM; skip" \
+      "LLVM IR linking. Use './apollo.sh build_gpu' for bitcode."
+    return
+  fi
+  build_cc_targets
+  local output="${TOP_DIR}/wllvm_linked"
+  rm -rf "${output:?}"/*
+  local libdevice="/usr/local/cuda/nvvm/libdevice/libdevice.10.bc"
+  local opts=()
+  if [ "${USE_GPU}" -eq 1 ] && [ -f "${libdevice}" ]; then
+    opts+=(--libdevice "${libdevice}")
+  fi
+  info "Linking LLVM IR for each cc_binary and cc_test into ${output} ..."
+  if python3 "${TOP_DIR}/tools/wllvm/extract_all.py" \
+      --output "${output}" --targets "${CC_TARGETS_FILE}" "${opts[@]}"; then
+    ok "Linked LLVM IR written to ${output}"
+  else
+    error "LLVM IR linking failed for some targets; see ${output}/index.json"
+    exit 1
   fi
 }
 
@@ -298,6 +409,9 @@ function main() {
 
   if [ "${APOLLO_BUILD}" -eq 1 ]; then
     SHORTHAND_TARGETS="apollo"
+    if [ "${ACTION}" = "build" ]; then
+      extract_linked_ir
+    fi
   fi
 
   success "Done building ${SHORTHAND_TARGETS}. Enjoy!"

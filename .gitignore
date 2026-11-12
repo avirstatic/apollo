@@ -86,6 +86,11 @@ modules/studio_connector
 
 #WORKSPACE
 
+
+# wllvm-bc
+wllvm_bc/
+wllvm_linked/
+
 # aem and buildtool
 /.aem/
 /dev/

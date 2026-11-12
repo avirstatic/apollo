@@ -64,7 +64,7 @@ export AEM_GEO=${AEM_GEO}
 # repository cache from it. Empty: none of them. Its branch is named after
 # the git branch of this tree.
 export APOLLO_HF_REPO="${APOLLO_HF_REPO-avirstatic/apollo_dep}"
-export APOLLO_HF_REVISION="${APOLLO_HF_REVISION:-r10.0.1}"
+export APOLLO_HF_REVISION="${APOLLO_HF_REVISION:-r10.0.1_wllvm}"
 
 # old env
 # TODO: will be removed in the future
