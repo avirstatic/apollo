@@ -415,7 +415,7 @@ function main() {
           "Try \"sudo apt install python3-pip\" "
     else
       info "Installing python tools ..."
-      install_python_tools
+      # install_python_tools
 
       info "Installing perception models ..."
       install_perception_models
